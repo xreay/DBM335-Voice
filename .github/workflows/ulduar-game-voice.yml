@@ -1,0 +1,83 @@
+name: DBM335 GAME Voice Ulduar A1
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-game-voice.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install free tools
+        run: |
+          python -m pip install edge-tts
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Generate A Xiaoxiao voice library
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, json, pathlib, subprocess, hashlib
+          import edge_tts
+          root = pathlib.Path('GAME_Ulduar_A1')
+          audio = root / 'OGG'
+          audio.mkdir(parents=True, exist_ok=True)
+          lines = json.loads('''{"fl_pursue":"你的载具被追踪，快跑！","fl_ward":"生命结界出现！","fl_system":"系统关闭！","ignis_flame":"烈焰喷射，停止施法！","ignis_pot":"你中了熔渣之锅！","ignis_brittle":"铁铸像易碎，击碎它！","raz_flame_you":"吞噬烈焰，注意脚下！","raz_flame_near":"附近烈焰，快躲！","raz_armor":"熔化护甲，层数过高！","raz_taunt":"熔化护甲，准备换坦！","xt_tantrum":"发脾气，全团掉血！","xt_light":"光芒炸弹，远离人群！","xt_gravity":"重力炸弹，远离人群！","xt_heart":"心脏暴露，转火心脏！","xt_void":"脚下黑水，快躲！","ic_overload":"超载，远离首领！","ic_fusion":"融合之拳，立即驱散！","ic_death":"死亡符文，快躲！","ic_shield":"符文护盾，驱散首领！","ic_lightning":"闪电之藤，快躲！","ic_whirl":"闪电旋风，立即打断！","kol_grip":"你被石握抓住，快救我！","kol_armor":"碾压护甲，层数过高！","kol_eye_you":"眼棱追你，快跑！","kol_eye_damage":"眼棱伤害，快躲！","kol_eye_near":"附近眼棱，快躲！","aur_blast":"哨兵冲击，立即打断！","aur_fear":"恐怖尖啸，准备恐惧！","aur_sonic":"音速尖啸，集合分摊！","aur_void":"脚下黑水，快躲！","hod_freeze":"瞬间冻结，寻找雪堆！","hod_cloud":"风暴之云，共享增益！","hod_cold":"刺骨之寒，保持移动！","tho_heal":"强效治疗术，立即打断！","tho_mend":"符文治疗，立即打断！","tho_strike":"失衡打击，开启减伤！","tho_taunt":"失衡打击，准备换坦！","tho_rune_you":"符文爆炸，远离人群！","tho_rune_near":"附近符文爆炸，快躲！","tho_lightning":"闪电冲击，快躲！","tho_hard_fail":"困难模式失败！","tho_hard_on":"困难模式已激活！","tho_p2":"第二阶段！","fre_tree":"古树出现！","fre_trio":"三元素出现，转火小怪！","fre_lash":"爆炸鞭笞者出现！","fre_gift":"生命缚誓者的礼物，转火！","fre_bomb":"自然炸弹，注意脚下！","fre_fury":"自然之怒，远离人群！","fre_roots":"你被铁根缠绕，快救我！","fre_tremor":"地震，停止施法！","fre_beam":"不稳定能量，快躲！","fre_p2":"第二阶段！","elder_fist":"石拳，坦克撤离！","elder_impale":"穿刺，准备换坦！","mim_laser":"激光弹幕，保持移动！","mim_shock":"震荡冲击，快撤离！","mim_plasma":"等离子冲击，开启减伤！","mim_frost":"冰霜炸弹，注意躲避！","mim_mines":"感应地雷，注意脚下！","mim_napalm":"汽油弹，远离人群！","mim_siren":"震耳警报，快撤离！","mim_rocket":"火箭打击，快躲！","vez_crash":"暗影冲击，快躲！","vez_crash_near":"附近暗影冲击，快躲！","vez_dark":"黑暗涌动，开启减伤！","vez_mark":"无面者的印记，远离人群！","vez_mark_near":"附近无面者的印记，快躲！","vez_animus":"萨隆邪铁畸体出现！","yog_gaze":"疯狂凝视，立即转身！","yog_gaze_end":"凝视结束，可以转回！","yog_fervor":"你中了萨拉的热情！","yog_portal":"脑房传送门即将开启！","yog_brain_exit":"疯狂诱导，快离开脑房！","yog_roar":"震耳咆哮，沉默预警！","yog_crusher":"重压触须出现！","yog_link":"心智连接，连线玩家靠近！","yog_malady":"你中了心灵疾病！","yog_malady_near":"附近心灵疾病，快远离！","yog_squeeze":"你被触须缠住，快救我！","yog_sanity":"理智过低！","yog_guardian":"守护者低血量，停止攻击！","yog_p2":"第二阶段！","yog_p3":"第三阶段！","alg_bang":"大爆炸，按分工处理！","alg_cosmic":"宇宙重击，注意脚下！","alg_phase_stack":"相位拳，层数过高！","alg_phase_taunt":"相位拳，准备换坦！","alg_p2":"第二阶段！","alg_p2_soon":"即将进入第二阶段！","alg_star":"坍缩星低血量，注意全团伤害！","vez_kick_1":"灼热烈焰，一号打断！","vez_kick_2":"灼热烈焰，二号打断！","vez_kick_3":"灼热烈焰，三号打断！","vez_kick_4":"灼热烈焰，四号打断！","vez_kick_5":"灼热烈焰，五号打断！"}''')
+          voice, rate, pitch = 'zh-CN-XiaoxiaoNeural', '+15%', '+0Hz'
+          def ff(*args):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y',*map(str,args)],check=True)
+          def probe(path):
+              return json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_name,sample_rate,channels','-of','json',str(path)]))
+          async def main():
+              rows, failures = [], []
+              for key, text in lines.items():
+                  src = audio / (key+'.mp3')
+                  out = audio / (key+'.ogg')
+                  try:
+                      for attempt in range(3):
+                          try:
+                              await asyncio.wait_for(edge_tts.Communicate(text,voice,rate=rate,pitch=pitch).save(str(src)), timeout=30)
+                              if float(probe(src)['format']['duration']) <= 0: raise ValueError('empty audio')
+                              break
+                          except Exception:
+                              if attempt == 2: raise
+                              await asyncio.sleep(2**attempt)
+                      ff('-i',src,'-map_metadata','-1','-vn','-ac','1','-ar','44100','-af','loudnorm=I=-16:TP=-1.5:LRA=7','-c:a','libvorbis','-q:a','4',out)
+                      info=probe(out)
+                      stream=info['streams'][0]
+                      assert stream['codec_name']=='vorbis' and stream['channels']==1
+                      seconds=float(info['format']['duration'])
+                      assert 0.3<seconds<8
+                      rows.append({'id':key,'text':text,'file':'OGG/'+out.name,'seconds':round(seconds,3),'sha256':hashlib.sha256(out.read_bytes()).hexdigest()})
+                      print('OK',key,round(seconds,3),flush=True)
+                  except Exception as exc:
+                      failures.append({'id':key,'error':str(exc)})
+                      out.unlink(missing_ok=True)
+                  finally:
+                      src.unlink(missing_ok=True)
+              (root/'manifest.json').write_text(json.dumps({'voice':voice,'rate':rate,'pitch':pitch,'expected':len(lines),'generated':len(rows),'clips':rows,'failures':failures},ensure_ascii=False,indent=2),encoding='utf-8')
+              # Grouped auditions, avoiding excessive length and command-line size.
+              for prefix in sorted(set(r['id'].split('_')[0] for r in rows)):
+                  group=[r for r in rows if r['id'].startswith(prefix+'_')]
+                  inputs, filters=[],[]
+                  for i,r in enumerate(group):
+                      inputs+=['-i',root/r['file']]
+                      filters.append(f'[{i}:a]aformat=sample_rates=44100:channel_layouts=mono'+(',apad=pad_dur=0.7' if i<len(group)-1 else '')+f'[a{i}]')
+                  filters.append(''.join(f'[a{i}]' for i in range(len(group)))+f'concat=n={len(group)}:v=0:a=1[out]')
+                  ff(*inputs,'-filter_complex',';'.join(filters),'-map','[out]','-c:a','libmp3lame','-b:a','128k',root/(prefix+'_Preview.mp3'))
+              if failures: raise RuntimeError(str(failures))
+          asyncio.run(main())
+          PY
+      - name: Upload voice library
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_A1
+          path: GAME_Ulduar_A1/
+          retention-days: 7
+          if-no-files-found: error
