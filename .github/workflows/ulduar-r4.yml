@@ -1,0 +1,44 @@
+name: GAME Voice Ulduar R4
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-r4.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install edge-tts
+      - name: Generate source MP3
+        run: |
+          python - <<'PY'
+          import asyncio,edge_tts,pathlib,json,hashlib
+          d=pathlib.Path('output');d.mkdir()
+          lines=json.loads('''{"mim_assault":"突击机器人已参战，注意处理！","mim_laser_end":"激光弹幕停止，注意站位！","yog_corrupt_you":"你中了腐蚀触须减益，注意驱散！","yog_empower_actual":"强化暗影已生效，注意守护者血量！","vez_searing_done":"灼热烈焰已释放，注意全团血量！","vez_hard_actual":"困难模式已激活，转火畸体！","alg_constellation":"活体星座已参战，注意处理！","alg_darkmatter":"黑暗物质出现，注意处理！"}''')
+          async def main():
+              rows=[]
+              for k,v in lines.items():
+                  p=d/(k+'.mp3')
+                  for attempt in range(3):
+                      try:
+                          await asyncio.wait_for(edge_tts.Communicate(v,'zh-CN-XiaoxiaoNeural',rate='+15%',pitch='+0Hz').save(str(p)),timeout=25)
+                          assert p.stat().st_size>1024
+                          break
+                      except Exception:
+                          if attempt==2: raise
+                          await asyncio.sleep(2)
+                  rows.append({'id':k,'text':v,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+              (d/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_R4
+          path: output/
+          retention-days: 7
