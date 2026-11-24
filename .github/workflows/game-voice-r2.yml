@@ -1,0 +1,155 @@
+name: DBM335 GAME Voice R2
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/game-voice-r2.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install free tools
+        run: |
+          python -m pip install edge-tts
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Reuse completed A1 recordings only if verified
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: GAME_Ulduar_A1
+          run-id: 45357925712
+          github-token: ${{ github.token }}
+          path: reuse
+      - name: Decode catalog and generate shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, base64, gzip, hashlib, json, os, pathlib, re, shutil, subprocess
+          import edge_tts
+          catalog = gzip.decompress(base64.b64decode(pathlib.Path('game-voice-r2/catalog.tsv.gz.b64').read_text().strip(), validate=True))
+          assert hashlib.sha256(catalog).hexdigest() == 'ba7020add8343b2ffd84ee15d651323ecfbb00757bce92baf30c4b0216790d4e'
+          items = [line.split('\t',1) for line in catalog.decode().splitlines()]
+          assert len(items) == 299 and len(dict(items)) == 299
+          assert all(re.fullmatch(r'[a-z0-9_]+', k) and t for k,t in items)
+          shard=int(os.environ['SHARD'])
+          root=pathlib.Path('output'); audio=root/'OGG'; audio.mkdir(parents=True,exist_ok=True)
+          voice,rate,pitch='zh-CN-XiaoxiaoNeural','+15%','+0Hz'
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          def probe(p):
+              info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_name,sample_rate,channels','-of','json',str(p)]))
+              return info
+          def check(p):
+              info=probe(p); st=info['streams'][0]; sec=float(info['format']['duration'])
+              assert st['codec_name']=='vorbis' and st['channels']==1 and st['sample_rate']=='44100' and 0.15<sec<8
+              return round(sec,3)
+          candidates={}
+          mp=pathlib.Path('reuse/manifest.json')
+          if mp.exists():
+              try:
+                  m=json.loads(mp.read_text())
+                  if (m['voice'],m['rate'],m['pitch']) == (voice,rate,pitch):
+                      for row in m['clips']:
+                          p=(mp.parent/row['file']).resolve()
+                          if p.is_relative_to(mp.parent.resolve()) and p.is_file() and digest(p)==row['sha256']:
+                              candidates[row['text']]=p
+              except Exception as exc: print('Reuse unavailable:',exc)
+          def ff(*args):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y',*map(str,args)],check=True,timeout=30)
+          async def main():
+              rows=[]; failures=[]
+              for key,text in items[shard::4]:
+                  dst=audio/(key+'.ogg'); tmp=audio/(key+'.mp3')
+                  try:
+                      source='generated'
+                      p=candidates.get(text)
+                      if p:
+                          try: check(p); shutil.copyfile(p,dst); source='A1 exact text reuse'
+                          except Exception: dst.unlink(missing_ok=True)
+                      if not dst.exists():
+                          for attempt in range(4):
+                              try:
+                                  await asyncio.wait_for(edge_tts.Communicate(text,voice,rate=rate,pitch=pitch).save(str(tmp)),timeout=25)
+                                  assert float(probe(tmp)['format']['duration'])>0
+                                  ff('-i',tmp,'-map_metadata','-1','-vn','-ac','1','-ar','44100','-af','loudnorm=I=-16:TP=-1.5:LRA=7','-c:a','libvorbis','-q:a','4',dst)
+                                  check(dst)
+                                  break
+                              except Exception:
+                                  dst.unlink(missing_ok=True)
+                                  if attempt==3: raise
+                                  await asyncio.sleep(2**(attempt+1))
+                          await asyncio.sleep(0.4)
+                      sec=check(dst)
+                      rows.append({'id':key,'text':text,'seconds':sec,'sha256':digest(dst),'source':source})
+                      print('OK',key,sec,source,flush=True)
+                  except Exception as exc:
+                      dst.unlink(missing_ok=True); failures.append({'id':key,'error':str(exc)})
+                      print('FAIL',key,str(exc),flush=True)
+                  finally: tmp.unlink(missing_ok=True)
+                  (root/f'part-{shard}.json').write_text(json.dumps({'clips':rows,'failures':failures},ensure_ascii=False,indent=2))
+              if failures: raise RuntimeError(f'{len(failures)} clips failed')
+          asyncio.run(main())
+          PY
+      - name: Upload verified shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GAME_R2_part_${{ matrix.shard }}
+          path: output/
+          retention-days: 7
+          if-no-files-found: error
+  verify:
+    needs: synthesize
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: GAME_R2_part_*
+          path: combined
+          merge-multiple: true
+      - name: Verify all 299 files and catalog
+        run: |
+          python - <<'PY'
+          import gzip,base64,pathlib,json,hashlib,shutil
+          raw=gzip.decompress(base64.b64decode(pathlib.Path('game-voice-r2/catalog.tsv.gz.b64').read_text().strip(),validate=True))
+          assert hashlib.sha256(raw).hexdigest()=='ba7020add8343b2ffd84ee15d651323ecfbb00757bce92baf30c4b0216790d4e'
+          expected=dict(line.split('\t',1) for line in raw.decode().splitlines())
+          root=pathlib.Path('combined')
+          rows={}
+          for p in sorted(root.glob('part-*.json')):
+              for r in json.loads(p.read_text())['clips']:
+                  k=r['id']; assert k not in rows; assert expected[k]==r['text']
+                  f=root/'OGG'/(k+'.ogg'); assert f.is_file() and hashlib.sha256(f.read_bytes()).hexdigest()==r['sha256']; rows[k]=r
+          missing=sorted(set(expected)-set(rows))
+          (root/'manifest.json').write_text(json.dumps({'voice':'zh-CN-XiaoxiaoNeural','rate':'+15%','pitch':'+0Hz','expected':len(expected),'generated':len(rows),'missing':missing,'clips':list(rows.values())},ensure_ascii=False,indent=2))
+          print('Verified',len(rows),'/',len(expected),'missing',missing)
+          assert not missing and len(expected)==299
+          shutil.copyfile('game-voice-r2/catalog.tsv.gz.b64',root/'catalog.tsv.gz.b64')
+          PY
+      - name: Publish complete GAME voice library
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBM335_GAME_Voice_R2
+          path: |
+            combined/OGG/
+            combined/manifest.json
+            combined/catalog.tsv.gz.b64
+          retention-days: 14
+          if-no-files-found: error
