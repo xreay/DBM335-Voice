@@ -1,0 +1,47 @@
+name: GAME Voice Ulduar R3
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-r3.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install edge-tts
+      - name: Generate and validate
+        run: |
+          python - <<'PY'
+          import asyncio, edge_tts, pathlib, json, subprocess, hashlib
+          d=pathlib.Path('output');d.mkdir()
+          lines=json.loads('''{"hod_icicle":"落冰击中你，快躲！","hod_frozen":"冰冻打击，注意坦克和全团血量！","hod_npc":"援助者被冻结，救援！","hod_fire":"获得温暖篝火增益！","tho_chain":"闪电链，保持分散！","tho_nova":"冰霜新星，注意躲避！","tho_blizzard":"暴风雪，快躲！","fre_wave":"潮汐波，注意躲避！","fre_lash_lightning":"闪电鞭笞，注意治疗！","yog_ray":"死亡射线，注意躲避！","yog_ray_hit":"死亡射线击中你，快躲！","alg_star_explode":"坍缩星爆炸，注意全团血量！"}''')
+          async def main():
+              rows=[]
+              for k,v in lines.items():
+                  src=d/(k+'.mp3');dst=d/(k+'.ogg')
+                  for attempt in range(3):
+                      try:
+                          await asyncio.wait_for(edge_tts.Communicate(v,'zh-CN-XiaoxiaoNeural',rate='+15%',pitch='+0Hz').save(str(src)),timeout=25)
+                          subprocess.run(['ffmpeg','-v','error','-y','-i',str(src),'-ac','1','-ar','44100','-af','silenceremove=start_periods=1:start_duration=0.02:start_threshold=-40dB:start_silence=0.04,areverse,silenceremove=start_periods=1:start_duration=0.02:start_threshold=-40dB:start_silence=0.08,areverse,loudnorm=I=-16:TP=-1.5:LRA=7','-c:a','libvorbis','-q:a','4',str(dst)],check=True)
+                          info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_name,sample_rate,channels','-of','json',str(dst)]))
+                          sec=float(info['format']['duration']);assert .15<sec<7 and info['streams'][0]['codec_name']=='vorbis'
+                          break
+                      except Exception:
+                          if attempt==2: raise
+                          await asyncio.sleep(2)
+                  src.unlink()
+                  rows.append({'id':k,'text':v,'seconds':sec,'sha256':hashlib.sha256(dst.read_bytes()).hexdigest()})
+              (d/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_R3
+          path: output/
+          retention-days: 7
