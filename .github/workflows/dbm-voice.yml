@@ -1,0 +1,91 @@
+name: DBM335 Free Voice Preview
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/dbm-voice.yml'
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install free tools
+        run: |
+          python -m pip install edge-tts
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Generate Mandarin voice previews
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, json, pathlib, subprocess
+          import edge_tts
+          root = pathlib.Path('DBM335_VoicePreview')
+          root.mkdir(exist_ok=True)
+          lines = [
+              ('gaze_turn', '疯狂凝视，立即转身！'),
+              ('laser_move', '激光弹幕，保持移动！'),
+              ('lightning_run', '闪电之藤，快躲！'),
+              ('fusion_dispel', '融合之拳，立即驱散！'),
+              ('gaze_end', '凝视结束，可以转回！'),
+          ]
+          profiles = [
+              ('A_Xiaoxiao', 'zh-CN-XiaoxiaoNeural', '+15%', '+0Hz'),
+              ('B_Xiaoyi', 'zh-CN-XiaoyiNeural', '+15%', '+0Hz'),
+              ('C_Xiaochen', 'zh-CN-XiaochenNeural', '+20%', '+0Hz'),
+          ]
+          def ff(*args):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y',*map(str,args)],check=True)
+          def probe(path):
+              return json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_name,sample_rate,channels','-of','json',str(path)]))
+          async def main():
+              manifest, failures = [], []
+              for label, voice, rate, pitch in profiles:
+                  folder = root / label
+                  folder.mkdir(exist_ok=True)
+                  try:
+                      paths, rows = [], []
+                      for key, text in lines:
+                          src = folder / (key+'.mp3')
+                          out = folder / (key+'.ogg')
+                          for attempt in range(3):
+                              try:
+                                  await asyncio.wait_for(edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(str(src)), timeout=35)
+                                  if float(probe(src)['format']['duration']) <= 0: raise ValueError('empty recording')
+                                  break
+                              except Exception:
+                                  if attempt == 2: raise
+                                  await asyncio.sleep(2 ** attempt)
+                          ff('-i',src,'-map_metadata','-1','-vn','-ac','1','-ar','44100','-af','loudnorm=I=-16:TP=-1.5:LRA=7','-c:a','libvorbis','-q:a','4',out)
+                          info = probe(out)
+                          assert info['streams'][0]['codec_name'] == 'vorbis'
+                          assert float(info['format']['duration']) > 0
+                          rows.append({'id':key,'text':text,'file':str(out.relative_to(root)),'seconds':round(float(info['format']['duration']),3)})
+                          paths.append(out)
+                          src.unlink()
+                      inputs, filters = [], []
+                      for i,p in enumerate(paths):
+                          inputs += ['-i',p]
+                          filters.append(f'[{i}:a]aformat=sample_rates=44100:channel_layouts=mono'+(',apad=pad_dur=0.8' if i<len(paths)-1 else '')+f'[a{i}]')
+                      filters.append(''.join(f'[a{i}]' for i in range(len(paths)))+f'concat=n={len(paths)}:v=0:a=1[out]')
+                      preview = root / (label+'_Preview.mp3')
+                      ff(*inputs,'-filter_complex',';'.join(filters),'-map','[out]','-c:a','libmp3lame','-b:a','128k',preview)
+                      manifest.append({'profile':label,'voice':voice,'rate':rate,'pitch':pitch,'clips':rows,'preview':preview.name})
+                  except Exception as exc:
+                      failures.append(f'{label}: {type(exc).__name__}: {exc}')
+              (root/'manifest.json').write_text(json.dumps({'successful':manifest,'failures':failures},ensure_ascii=False,indent=2),encoding='utf-8')
+              if not manifest: raise RuntimeError('No complete voice preview generated: '+str(failures))
+              print(json.dumps({'successful':[x['profile'] for x in manifest],'failures':failures},ensure_ascii=False))
+          asyncio.run(main())
+          PY
+      - name: Upload audition MP3 and individual OGG files
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBM335_VoicePreview
+          path: DBM335_VoicePreview/
+          retention-days: 1
+          if-no-files-found: error
