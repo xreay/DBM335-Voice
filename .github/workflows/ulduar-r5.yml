@@ -1,0 +1,44 @@
+name: GAME Voice Ulduar R5
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-r5.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install edge-tts
+      - name: Generate source MP3
+        run: |
+          python - <<'PY'
+          import asyncio,edge_tts,pathlib,json,hashlib
+          d=pathlib.Path('output');d.mkdir()
+          lines=json.loads('''{"fl_system_end":"系统关闭结束，注意载具走位！","ignis_molten":"铁铸像熔化，引入水中！","raz_ground":"锋鳞落地，转火首领！","raz_air":"锋鳞升空，处理小怪！","raz_permanent":"锋鳞永久落地！","raz_breath":"烈焰吐息，注意坦克！","xt_heart_end":"心脏阶段结束，转火首领！","xt_hard":"心碎，困难模式已激活！","xt_repair":"废料机器人正在修复首领！","xt_spark":"生命火花出现，注意处理！","kol_right_dead":"右臂已摧毁！","kol_left_dead":"左臂已摧毁！","kol_arm_return":"手臂重生，注意站位！","aur_defender":"野性防御者出现！","aur_revive":"野性防御者恢复行动！"}''')
+          async def main():
+              rows=[]
+              for k,v in lines.items():
+                  p=d/(k+'.mp3')
+                  for attempt in range(3):
+                      try:
+                          await asyncio.wait_for(edge_tts.Communicate(v,'zh-CN-XiaoxiaoNeural',rate='+15%',pitch='+0Hz').save(str(p)),timeout=25)
+                          assert p.stat().st_size>1024
+                          break
+                      except Exception:
+                          if attempt==2: raise
+                          await asyncio.sleep(2)
+                  rows.append({'id':k,'text':v,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+              (d/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_R5
+          path: output/
+          retention-days: 7
