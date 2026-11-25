@@ -1,0 +1,44 @@
+name: GAME Voice Ulduar R6
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-r6.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install edge-tts
+      - name: Generate source MP3
+        run: |
+          python - <<'PY'
+          import asyncio,edge_tts,pathlib,json,hashlib
+          d=pathlib.Path('output');d.mkdir()
+          lines=json.loads('''{"hod_cold_high":"刺骨之寒层数过高，立即移动！","yog_guardian_many":"守护者过多，注意控制数量！","yog_guardian_critical":"守护者严重堆积，避免踩云！","alg_phase_four":"相位拳四层，注意换坦！","alg_phase_five":"相位拳五层，注意相位转换！","raz_armor_swap":"熔化护甲层数过高，准备换坦！","kol_armor_defensive":"碾压护甲层数过高，注意减伤！","yog_sanity_critical":"理智严重不足，注意避免损失理智！"}''')
+          async def main():
+              rows=[]
+              for k,v in lines.items():
+                  p=d/(k+'.mp3')
+                  for attempt in range(3):
+                      try:
+                          await asyncio.wait_for(edge_tts.Communicate(v,'zh-CN-XiaoxiaoNeural',rate='+15%',pitch='+0Hz').save(str(p)),timeout=25)
+                          assert p.stat().st_size>1024
+                          break
+                      except Exception:
+                          if attempt==2: raise
+                          await asyncio.sleep(2)
+                  rows.append({'id':k,'text':v,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+              (d/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_R6
+          path: output/
+          retention-days: 7
