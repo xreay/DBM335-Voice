@@ -1,0 +1,44 @@
+name: GAME Voice Ulduar R7
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ulduar-r7.yml'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install edge-tts
+      - name: Generate source MP3
+        run: |
+          python - <<'PY'
+          import asyncio,edge_tts,pathlib,json,hashlib
+          d=pathlib.Path('output');d.mkdir()
+          lines=json.loads('''{"fl_overload_start":"过载已启动！","fl_shutdown_dps":"系统关闭，全力输出！"}''')
+          async def main():
+              rows=[]
+              for k,v in lines.items():
+                  p=d/(k+'.mp3')
+                  for attempt in range(3):
+                      try:
+                          await asyncio.wait_for(edge_tts.Communicate(v,'zh-CN-XiaoxiaoNeural',rate='+15%',pitch='+0Hz').save(str(p)),timeout=25)
+                          assert p.stat().st_size>1024
+                          break
+                      except Exception:
+                          if attempt==2: raise
+                          await asyncio.sleep(2)
+                  rows.append({'id':k,'text':v,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+              (d/'manifest.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2))
+          asyncio.run(main())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAME_Ulduar_R7
+          path: output/
+          retention-days: 7
